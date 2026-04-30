@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime as dt_obj, timedelta
 
 # --- 1. KRONOS SYSTEM INITIALIZATION ---
-KRONOS_PATH = r'D:\Kronos'
-WEIGHTS_PATH = r'D:\Kronos\weights\Kronos-base'
+KRONOS_PATH = os.path.join(os.getcwd(), 'Kronos')
+WEIGHTS_PATH = os.path.join(KRONOS_PATH, 'weights', 'Kronos-base')
 sys.path.append(KRONOS_PATH)
 
 @st.cache_resource
