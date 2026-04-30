@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime as dt_obj, timedelta
 
 # --- 1. KRONOS SYSTEM INITIALIZATION ---
-# Use relative paths for GitHub/Cloud compatibility
+# Use relative paths for Cloud compatibility
 current_dir = os.getcwd()
 KRONOS_PATH = current_dir 
 WEIGHTS_PATH = os.path.join(current_dir, 'weights', 'Kronos-base')
@@ -17,11 +17,12 @@ sys.path.append(KRONOS_PATH)
 
 @st.cache_resource
 def load_kronos_engine():
-    """Caches the model in memory to prevent slow reloads."""
+    """Caches the model in memory to prevent slow reloads[cite: 8]."""
     try:
         from model import Kronos, KronosTokenizer, KronosPredictor
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # Ensure 'weights' folder is uploaded to your GitHub repo[cite: 8]
+        
+        # local_files_only=True requires the weights folder in your repo[cite: 8]
         model = Kronos.from_pretrained(WEIGHTS_PATH, local_files_only=True).to(device)
         tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
         predictor = KronosPredictor(model, tokenizer, max_context=512)
@@ -32,7 +33,7 @@ def load_kronos_engine():
 
 # --- 2. LOGIC UTILITIES ---
 def add_technicals(df):
-    """Calculates technical indicators for the model context[cite: 8]."""
+    """Calculates indicators used for model context[cite: 8]."""
     delta = df['close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -54,9 +55,9 @@ def get_strategy_recommendation(pred_df):
     
     if abs(expected_ret) <= 0.35 and vol_width <= 1.2:
         return "IRON FLY / IRON CONDOR", "success", "Maximize Theta decay while remaining range-bound.[cite: 8]"
-    elif expected_ret > 0.35:
+    elif expected_ret > 0.35 and vol_width <= 2.0:
         return "BULL PUT SPREAD", "info", f"Bullish Trend. Sell Put Credit at support ({round(safe_low/50)*50}).[cite: 8]"
-    elif expected_ret < -0.35:
+    elif expected_ret < -0.35 and vol_width <= 2.0:
         return "BEAR CALL SPREAD", "warning", f"Bearish Trend. Sell Call Credit at resistance ({round(safe_high/50)*50}).[cite: 8]"
     else:
         return "WAIT / STAGNANT", "error", "High Volatility or unclear direction. Avoid selling options.[cite: 8]"
@@ -78,8 +79,11 @@ if run_btn and predictor:
         with st.spinner("Executing Transformer Inference..."):
             # 1. Main Data Fetching[cite: 8]
             nifty_raw = yf.download(ticker, period="60d", interval="15m", progress=False)
-            if isinstance(nifty_raw.columns, pd.MultiIndex): nifty_raw.columns = [c[0] for c in nifty_raw.columns]
+            if nifty_raw.empty:
+                st.error("❌ Failed to fetch Nifty data. Check ticker or connection.[cite: 8]")
+                st.stop()
             
+            if isinstance(nifty_raw.columns, pd.MultiIndex): nifty_raw.columns = [c[0] for c in nifty_raw.columns]
             df = nifty_raw.reset_index()
             df.columns = [c.lower() for c in df.columns]
             df.rename(columns={'datetime': 'date', 'timestamp': 'date'}, inplace=True)
@@ -87,12 +91,21 @@ if run_btn and predictor:
 
             # 2. Correlated Data Fetching (Hang Seng)[cite: 8]
             hsi_raw = yf.download("^HSI", period="60d", interval="15m", progress=False)
-            if isinstance(hsi_raw.columns, pd.MultiIndex): hsi_raw.columns = [c[0] for c in hsi_raw.columns]
-            hsi_close = hsi_raw['Close'].rename("hsi_close")
+            if not hsi_raw.empty:
+                if isinstance(hsi_raw.columns, pd.MultiIndex): hsi_raw.columns = [c[0] for c in hsi_raw.columns]
+                hsi_close = hsi_raw['Close'].rename("hsi_close")
+                df = pd.merge(df, hsi_close, left_on='date', right_index=True, how='left').ffill()
+            else:
+                st.warning("⚠️ Hang Seng data unavailable. Using Nifty fallback.[cite: 8]")
+                df['hsi_close'] = df['close']
             
-            # 3. Merging & Indicators[cite: 8]
-            df = pd.merge(df, hsi_close, left_on='date', right_index=True, how='left').ffill()
+            # 3. Technicals & Cleaning[cite: 8]
             df = add_technicals(df).dropna()
+            
+            # Critical Validation: Prevent tensor error by ensuring enough context[cite: 8]
+            if len(df) < 150:
+                st.error(f"❌ Need 150 candles for inference, but found only {len(df)}.[cite: 8]")
+                st.stop()
             
             # 4. Market Window Alignment[cite: 8]
             now_dt = dt_obj.now()
@@ -101,14 +114,16 @@ if run_btn and predictor:
             if start_ts.weekday() >= 5: start_ts += timedelta(days=(7-start_ts.weekday()))
             y_ts = pd.date_range(start=start_ts, periods=24, freq='15min')
 
-            # 5. Prediction Engine
+            # 5. Prediction Engine[cite: 8]
             with torch.inference_mode():
                 x_df = df.tail(150).copy()
+                # Ensure input tensor has data before calling model[cite: 8]
                 pred_df = predictor.predict(df=x_df, x_timestamp=x_df['date'], 
                                             y_timestamp=pd.Series(y_ts), pred_len=24, sample_count=mc_samples)
+            
             pred_df['date'] = y_ts.values[:len(pred_df)]
 
-            # 6. Dashboard Metrics[cite: 8]
+            # 6. Dashboard Results[cite: 8]
             strat, level, desc = get_strategy_recommendation(pred_df)
             
             c1, c2, c3 = st.columns(3)
@@ -127,16 +142,16 @@ if run_btn and predictor:
             h_plt = df.tail(60).reset_index(drop=True)
             up, dn = h_plt[h_plt.close >= h_plt.open], h_plt[h_plt.close < h_plt.open]
             
-            ax.bar(up.index, up.close - up.open, 0.6, bottom=up.open, color='#26a69a', label='Bullish')
+            ax.bar(up.index, up.close - up.open, 0.6, bottom=up.open, color='#26a69a')
             ax.vlines(up.index, up.low, up.high, color='#26a69a')
-            ax.bar(dn.index, dn.close - dn.open, 0.6, bottom=dn.open, color='#ef5350', label='Bearish')
+            ax.bar(dn.index, dn.close - dn.open, 0.6, bottom=dn.open, color='#ef5350')
             ax.vlines(dn.index, dn.low, dn.high, color='#ef5350')
             
             p_idx = range(len(h_plt), len(h_plt) + len(pred_df))
-            ax.plot(p_idx, pred_df['close'], color='#ff7f0e', ls='--', marker='o', ms=4, label='Kronos Forecast')
+            ax.plot(p_idx, pred_df['close'], color='#ff7f0e', ls='--', marker='o', ms=4, label='Forecast')
             ax.fill_between(p_idx, pred_df['low'], pred_df['high'], color='#ff7f0e', alpha=0.15, label='Volatility Cloud')
             ax.legend()
             st.pyplot(fig)
 
     except Exception as e:
-        st.error(f"❌ Processing Error: {e}")
+        st.error(f"❌ Processing Error: {e}[cite: 8]")
