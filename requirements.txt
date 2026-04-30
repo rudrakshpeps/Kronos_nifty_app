@@ -6,3 +6,4 @@ matplotlib
 openpyxl
 huggingface_hub
 einops
+safetensors
