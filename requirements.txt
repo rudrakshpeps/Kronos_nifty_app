@@ -4,3 +4,4 @@ pandas
 torch
 matplotlib
 openpyxl
+huggingface_hub
