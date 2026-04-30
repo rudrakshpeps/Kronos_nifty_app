@@ -125,11 +125,15 @@ if run_btn and predictor:
 
             # 6. Dashboard Results[cite: 8]
             strat, level, desc = get_strategy_recommendation(pred_df)
-            
+
             c1, c2, c3 = st.columns(3)
             c1.metric("Strategy Type", strat)
             c2.metric("Predicted Volatility", f"{round(((pred_df['high'].max()-pred_df['low'].min())/pred_df['open'].iloc[0])*100, 2)}%")
-            c3.metric("Strike Range", f"{round(pred_df['low'].min())} - {round(pred_df['high'].max())}")
+
+            # ROUNDED STRIKE RANGE: Displays the nearest 50-point strikes
+            rounded_low = round(pred_df['low'].min() / 50) * 50
+            rounded_high = round(pred_df['high'].max() / 50) * 50
+            c3.metric("Tradable Strike Range", f"{rounded_low} - {rounded_high}")
 
             if level == "success": st.success(desc)
             elif level == "warning": st.warning(desc)
